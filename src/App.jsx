@@ -19,11 +19,15 @@ import {
   Github,
   UploadCloud,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  Download,
+  Upload
 } from 'lucide-react';
 import { useWorkspace } from './hooks/useWorkspace';
 import { createPractical, duplicatePractical } from './utils/practicals';
 import { addEntry, renameEntry, deleteEntry, duplicateFile, basename, dirname, within } from './utils/filesystem';
+import { createBackupPayload, validateBackup, mergePracticals, downloadBackupFile } from './utils/backup';
+import { computePracticalHash, getPracticalSyncStatus } from './utils/syncHash';
 import Dialog from './components/Dialog';
 import FileExplorer, { FileIcon } from './components/FileExplorer';
 import PreviewPanel from './components/PreviewPanel';
@@ -54,7 +58,12 @@ export default function App() {
   const [snapshot, setSnapshot] = useState(null);
   const [position, setPosition] = useState({ lineNumber: 1, column: 1 });
   const [notice, setNotice] = useState(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(false);
+  const [lastSyncError, setLastSyncError] = useState(null);
+
   const workspaceRef = useRef();
+  const importFileInputRef = useRef(null);
 
   const layout = { sidebar: true, showFiles: false, question: true, previewWidth: 42, ...data.layout };
   const activeRef = useRef(active);
@@ -66,6 +75,9 @@ export default function App() {
     }
   }
 
+  const isSyncingActive = github.syncingPracticalId === active?.id;
+  const syncStatus = getPracticalSyncStatus(active, data.githubSync || {}, isSyncingActive, lastSyncError);
+
   async function handleUpdateOnGitHub() {
     if (!github.connected) {
       setGithubOpen(true);
@@ -73,8 +85,31 @@ export default function App() {
     }
     if (!active) return;
 
+    if (syncStatus.state === 'UP_TO_DATE') {
+      setNotice({
+        text: '✓ GitHub is already up to date'
+      });
+      return;
+    }
+
+    setLastSyncError(null);
     try {
       const res = await github.updatePractical(active);
+      const currentHash = computePracticalHash(active);
+
+      // Save content hash upon successful push
+      setData(d => ({
+        ...d,
+        githubSync: {
+          ...(d.githubSync || {}),
+          [active.id]: {
+            hash: currentHash,
+            sha: res.sha,
+            syncedAt: Date.now()
+          }
+        }
+      }));
+
       if (res.unchanged) {
         setNotice({
           text: '✓ GitHub is already up to date'
@@ -87,11 +122,93 @@ export default function App() {
         });
       }
     } catch (err) {
+      setLastSyncError({ practicalId: active.id, message: err.message });
       setNotice({
         text: err.message || 'Could not update GitHub. Your practical is still saved locally.',
         isError: true
       });
     }
+  }
+
+  function handleExportBackup() {
+    try {
+      downloadBackupFile(data.practicals);
+      setNotice({
+        text: `✓ Exported backup with ${data.practicals.length} practical(s)`
+      });
+    } catch (e) {
+      setNotice({
+        text: `Export failed: ${e.message}`,
+        isError: true
+      });
+    }
+  }
+
+  function handleImportFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        const validation = validateBackup(text);
+        if (!validation.valid) {
+          setNotice({
+            text: validation.error || "That doesn't appear to be a valid ReactLab backup.",
+            isError: true
+          });
+          return;
+        }
+
+        const importedPracticals = validation.data.practicals;
+        if (data.practicals.length === 0) {
+          setData(d => ({
+            ...d,
+            practicals: importedPracticals,
+            activeId: importedPracticals[0]?.id || null
+          }));
+          setNotice({
+            text: `✓ Backup imported successfully (${importedPracticals.length} practicals)`
+          });
+          return;
+        }
+
+        setDialog({
+          type: 'import_choice',
+          title: 'Import ReactLab backup',
+          description: `This backup contains ${importedPracticals.length} practical(s). How would you like to import them?`,
+          onMerge: () => {
+            const { merged, importedCount } = mergePracticals(data.practicals, importedPracticals, computePracticalHash);
+            setData(d => ({
+              ...d,
+              practicals: merged,
+              activeId: importedPracticals[0]?.id || d.activeId
+            }));
+            setNotice({
+              text: `✓ Backup merged successfully (${importedCount} practicals added)`
+            });
+          },
+          onReplace: () => {
+            setData(d => ({
+              ...d,
+              practicals: importedPracticals,
+              activeId: importedPracticals[0]?.id || null
+            }));
+            setNotice({
+              text: `✓ Backup imported successfully (${importedPracticals.length} practicals)`
+            });
+          }
+        });
+      } catch (err) {
+        setNotice({
+          text: err.message || "That doesn't appear to be a valid ReactLab backup.",
+          isError: true
+        });
+      }
+    };
+    reader.readAsText(file);
   }
 
   useEffect(() => {
@@ -112,6 +229,7 @@ export default function App() {
   useEffect(() => {
     setSnapshot(null);
     setNotice(null);
+    setLastSyncError(null);
   }, [active?.id]);
 
   useEffect(() => {
@@ -122,6 +240,9 @@ export default function App() {
     };
     const handleEscape = e => {
       if (e.key === 'Escape') {
+        if (outputExpanded) {
+          setOutputExpanded(false);
+        }
         document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open'));
       }
     };
@@ -131,7 +252,7 @@ export default function App() {
       document.removeEventListener('pointerdown', closeMenus);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, []);
+  }, [outputExpanded]);
 
   function openFile(path) {
     update(p => ({
@@ -177,25 +298,25 @@ export default function App() {
     setDialog(
       action === 'rename'
         ? {
-            title: 'Rename practical',
-            value: p.title,
-            description: 'Give this practical a name you’ll remember.',
-            onSubmit: ({ value }) => {
-              if (!value.trim()) throw new Error('Enter a title.');
-              update(old => ({ ...old, title: value.trim() }), p.id);
-            }
+          title: 'Rename practical',
+          value: p.title,
+          description: 'Give this practical a name you’ll remember.',
+          onSubmit: ({ value }) => {
+            if (!value.trim()) throw new Error('Enter a title.');
+            update(old => ({ ...old, title: value.trim() }), p.id);
           }
+        }
         : {
-            danger: true,
-            title: `Delete “${p.title}”?`,
-            description: 'Its question, files, folders, and code will be permanently removed from this browser.',
-            onSubmit: () =>
-              setData(d => ({
-                ...d,
-                practicals: d.practicals.filter(item => item.id !== p.id),
-                activeId: d.activeId === p.id ? d.practicals.find(item => item.id !== p.id)?.id || null : d.activeId
-              }))
-          }
+          danger: true,
+          title: `Delete “${p.title}”?`,
+          description: 'Its question, files, folders, and code will be permanently removed from this browser.',
+          onSubmit: () =>
+            setData(d => ({
+              ...d,
+              practicals: d.practicals.filter(item => item.id !== p.id),
+              activeId: d.activeId === p.id ? d.practicals.find(item => item.id !== p.id)?.id || null : d.activeId
+            }))
+        }
     );
   }
 
@@ -246,16 +367,38 @@ export default function App() {
     });
   }
 
+  function openEditQuestionDialog() {
+    if (!active) return;
+    setDialog({
+      type: 'question',
+      title: 'Edit question',
+      description: 'What should this practical do?',
+      value: active.question,
+      onSubmit: ({ value }) => update(p => ({ ...p, question: value }))
+    });
+  }
+
   function startResize(event) {
     event.preventDefault();
-    const rect = workspaceRef.current.getBoundingClientRect();
-    const move = e => setLayout({ previewWidth: Math.min(65, Math.max(25, ((rect.right - e.clientX) / rect.width) * 100)) });
+    setIsResizing(true);
+    const rect = workspaceRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const move = e => {
+      const percentage = Math.min(65, Math.max(25, ((rect.right - e.clientX) / rect.width) * 100));
+      setLayout({ previewWidth: percentage });
+    };
+
     const stop = () => {
+      setIsResizing(false);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
       document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
+
     document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop);
   }
@@ -263,8 +406,6 @@ export default function App() {
   const filtered = data.practicals.filter(p => `${p.title} ${p.question}`.toLowerCase().includes(search.toLowerCase()));
   const currentSnapshot = snapshot?.practical.id === active?.id ? snapshot : null;
   const modified = currentSnapshot && JSON.stringify(currentSnapshot.practical.files) !== JSON.stringify(active?.files);
-
-  const isSyncingActive = github.syncingPracticalId === active?.id;
 
   return (
     <div className="app-shell">
@@ -320,54 +461,86 @@ export default function App() {
               <input aria-label="Search practicals" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
             </label>
             <div className="practical-list">
-              {filtered.map(p => (
-                <div className={`practical-item ${p.id === active?.id ? 'selected' : ''}`} key={p.id}>
-                  <button
-                    className="practical-select"
-                    onClick={() => {
-                      document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open'));
-                      setData(d => ({ ...d, activeId: p.id }));
-                    }}
-                  >
-                    <BookOpen size={16} />
-                    <span>{p.title}</span>
-                  </button>
-                  <details
-                    className="row-menu"
-                    onToggle={e => {
-                      if (e.currentTarget.open) {
-                        document.querySelectorAll('details.row-menu[open]').forEach(d => {
-                          if (d !== e.currentTarget) d.removeAttribute('open');
-                        });
-                      }
-                    }}
-                  >
-                    <summary aria-label={`Actions for ${p.title}`}>
-                      <MoreHorizontal size={17} />
-                    </summary>
-                    <div className="dropdown">
-                      {['rename', 'duplicate', 'delete'].map(action => (
-                        <button
-                          className={action === 'delete' ? 'danger-text' : ''}
-                          key={action}
-                          onClick={e => {
-                            e.stopPropagation();
-                            e.currentTarget.closest('details')?.removeAttribute('open');
-                            practicalAction(action, p);
-                          }}
-                        >
-                          {action[0].toUpperCase() + action.slice(1)}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
-                </div>
-              ))}
+              {filtered.map(p => {
+                const pSync = getPracticalSyncStatus(p, data.githubSync || {});
+                return (
+                  <div className={`practical-item ${p.id === active?.id ? 'selected' : ''}`} key={p.id}>
+                    <button
+                      className="practical-select"
+                      onClick={() => {
+                        document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open'));
+                        setData(d => ({ ...d, activeId: p.id }));
+                      }}
+                    >
+                      <BookOpen size={16} />
+                      <span>{p.title}</span>
+                      {github.connected && (
+                        <span className="sidebar-sync-badge">
+                          {pSync.state === 'UP_TO_DATE' ? (
+                            <span className="sync-dot synced" title="Synced with GitHub">✓</span>
+                          ) : pSync.state === 'MODIFIED' ? (
+                            <span className="sync-dot modified" title="Local changes not on GitHub">•</span>
+                          ) : null}
+                        </span>
+                      )}
+                    </button>
+                    <details
+                      className="row-menu"
+                      onToggle={e => {
+                        if (e.currentTarget.open) {
+                          document.querySelectorAll('details.row-menu[open]').forEach(d => {
+                            if (d !== e.currentTarget) d.removeAttribute('open');
+                          });
+                        }
+                      }}
+                    >
+                      <summary aria-label={`Actions for ${p.title}`}>
+                        <MoreHorizontal size={17} />
+                      </summary>
+                      <div className="dropdown">
+                        {['rename', 'duplicate', 'delete'].map(action => (
+                          <button
+                            className={action === 'delete' ? 'danger-text' : ''}
+                            key={action}
+                            onClick={e => {
+                              e.stopPropagation();
+                              e.currentTarget.closest('details')?.removeAttribute('open');
+                              practicalAction(action, p);
+                            }}
+                          >
+                            {action[0].toUpperCase() + action.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                );
+              })}
               {filtered.length === 0 && search && <p className="search-empty">No matching practicals.</p>}
             </div>
-            <div className="sidebar-note">
-              <HardDrive size={15} />
-              <span>Saved in this browser</span>
+
+            <div className="sidebar-footer">
+              <details className="row-menu backup-menu">
+                <summary className="sidebar-action-btn" title="Backup workspace" aria-label="Backup and restore practicals">
+                  <HardDrive size={14} />
+                  <span>Backup</span>
+                </summary>
+                <div className="dropdown backup-dropdown">
+                  <button onClick={handleExportBackup}>
+                    <Download size={14} /> Export backup (.json)
+                  </button>
+                  <button onClick={() => importFileInputRef.current?.click()}>
+                    <Upload size={14} /> Import backup…
+                  </button>
+                </div>
+              </details>
+              <input
+                type="file"
+                ref={importFileInputRef}
+                accept=".json,application/json"
+                style={{ display: 'none' }}
+                onChange={handleImportFileChange}
+              />
             </div>
           </aside>
         )}
@@ -395,15 +568,31 @@ export default function App() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <button
-                      className="secondary-button github-update-button"
+                      className={`secondary-button github-update-button ${syncStatus.state === 'UP_TO_DATE' ? 'synced' : ''}`}
                       onClick={handleUpdateOnGitHub}
                       disabled={isSyncingActive || github.busy}
-                      title={github.connected ? 'Push completed practical to GitHub' : 'Connect GitHub to push practicals'}
+                      title={
+                        !github.connected
+                          ? 'Connect GitHub to push practicals'
+                          : syncStatus.state === 'UP_TO_DATE'
+                            ? 'Local content matches GitHub'
+                            : syncStatus.state === 'NOT_UPLOADED'
+                              ? 'Add this practical to GitHub'
+                              : 'Push changes to GitHub'
+                      }
                       style={{ padding: '9px 15px', fontWeight: 550, gap: 7 }}
                     >
                       {isSyncingActive ? (
                         <>
                           <Loader2 size={16} className="animate-spin" /> Updating GitHub…
+                        </>
+                      ) : syncStatus.state === 'UP_TO_DATE' ? (
+                        <>
+                          <Check size={16} /> Up to date
+                        </>
+                      ) : syncStatus.state === 'NOT_UPLOADED' ? (
+                        <>
+                          <UploadCloud size={16} /> Add to GitHub
                         </>
                       ) : (
                         <>
@@ -424,24 +613,25 @@ export default function App() {
                   <button
                     className="icon-button"
                     aria-label="Edit question"
-                    onClick={() =>
-                      setDialog({
-                        type: 'question',
-                        title: 'Edit question',
-                        description: 'What should this practical do?',
-                        value: active.question,
-                        onSubmit: ({ value }) => update(p => ({ ...p, question: value }))
-                      })
-                    }
+                    title="Edit question"
+                    onClick={openEditQuestionDialog}
                   >
                     <Pencil size={14} />
                   </button>
                 </div>
-                {layout.question && <p className="question-text">{active.question || 'Add your question here.'}</p>}
+                {layout.question && (
+                  <p
+                    className="question-text question-clickable"
+                    title="Click to edit question"
+                    onClick={openEditQuestionDialog}
+                  >
+                    {active.question || 'Add your question here.'}
+                  </p>
+                )}
               </section>
 
-              <div className="coding-workspace" ref={workspaceRef}>
-                {layout.showFiles && (
+              <div className={`coding-workspace ${outputExpanded ? 'output-fullscreen' : ''}`} ref={workspaceRef}>
+                {!outputExpanded && layout.showFiles && (
                   <FileExplorer
                     key={active.id}
                     practical={active}
@@ -451,82 +641,116 @@ export default function App() {
                     onCollapse={() => setLayout({ showFiles: false })}
                   />
                 )}
-                <section className="editor-panel">
-                  <div className="code-toolbar">
-                    <span>Code</span>
-                    <button className={`file-toggle ${layout.showFiles ? 'selected' : ''}`} onClick={() => setLayout({ showFiles: !layout.showFiles })}>
-                      <FolderTree size={15} /> Files
-                    </button>
-                  </div>
-                  <div className="editor-tabs">
-                    {[...new Set([...active.openFiles, active.activeFile])]
-                      .filter(path => active.files[path])
-                      .map(path => (
-                        <div className={`editor-tab ${path === active.activeFile ? 'selected' : ''}`} key={path}>
-                          <button title={path} onClick={() => openFile(path)}>
-                            <FileIcon path={path} />
-                            {basename(path)}
-                          </button>
-                          <button className="close-tab" aria-label={`Close ${basename(path)}`} onClick={() => closeFile(path)}>
-                            <X size={12} />
-                          </button>
-                        </div>
-                      ))}
-                  </div>
-                  <div className="editor-container">
-                    <Suspense fallback={<div className="editor-loading">Loading editor…</div>}>
-                      <CodeEditor
-                        theme={theme}
-                        practical={active}
-                        onChange={code =>
-                          update(p => ({
-                            ...p,
-                            files: { ...p.files, [p.activeFile]: { type: 'file', code } }
-                          }))
-                        }
-                        onRun={run}
-                        onPosition={setPosition}
-                      />
-                    </Suspense>
-                  </div>
-                  <div className="editor-foot">
-                    <span>{active.activeFile}</span>
-                    <span>
-                      Ln {position.lineNumber}, Col {position.column}
-                    </span>
-                  </div>
-                </section>
+
+                {!outputExpanded && (
+                  <section className="editor-panel">
+                    <div className="code-toolbar">
+                      <span>Code</span>
+                      <button
+                        className={`file-toggle ${layout.showFiles ? 'selected' : ''}`}
+                        onClick={() => setLayout({ showFiles: !layout.showFiles })}
+                        title={layout.showFiles ? 'Close file explorer' : 'Open file explorer'}
+                        aria-label={layout.showFiles ? 'Close file explorer' : 'Open file explorer'}
+                      >
+                        <FolderTree size={15} /> Files
+                      </button>
+                    </div>
+                    <div className="editor-tabs">
+                      {[...new Set([...active.openFiles, active.activeFile])]
+                        .filter(path => active.files[path])
+                        .map(path => (
+                          <div className={`editor-tab ${path === active.activeFile ? 'selected' : ''}`} key={path}>
+                            <button title={path} onClick={() => openFile(path)}>
+                              <FileIcon path={path} />
+                              {basename(path)}
+                            </button>
+                            <button className="close-tab" aria-label={`Close ${basename(path)}`} onClick={() => closeFile(path)}>
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                    <div className="editor-container">
+                      <Suspense fallback={<div className="editor-loading">Loading editor…</div>}>
+                        <CodeEditor
+                          theme={theme}
+                          practical={active}
+                          onChange={code =>
+                            update(p => ({
+                              ...p,
+                              files: { ...p.files, [p.activeFile]: { type: 'file', code } }
+                            }))
+                          }
+                          onRun={run}
+                          onPosition={setPosition}
+                        />
+                      </Suspense>
+                    </div>
+                    <div className="editor-foot">
+                      <span>{active.activeFile}</span>
+                      <span>
+                        Ln {position.lineNumber}, Col {position.column}
+                      </span>
+                    </div>
+                  </section>
+                )}
+
+                {!outputExpanded && (
+                  <div
+                    className="resize-handle"
+                    role="separator"
+                    aria-label="Resize output panel"
+                    aria-orientation="vertical"
+                    aria-valuenow={Math.round(layout.previewWidth)}
+                    tabIndex={0}
+                    onPointerDown={startResize}
+                    onKeyDown={e => {
+                      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        setLayout({
+                          previewWidth: Math.min(65, Math.max(25, layout.previewWidth + (e.key === 'ArrowLeft' ? 2 : -2)))
+                        });
+                      }
+                    }}
+                  />
+                )}
 
                 <div
-                  className="resize-handle"
-                  role="separator"
-                  aria-label="Resize output panel"
-                  aria-orientation="vertical"
-                  aria-valuenow={Math.round(layout.previewWidth)}
-                  tabIndex={0}
-                  onPointerDown={startResize}
-                  onKeyDown={e => {
-                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                      e.preventDefault();
-                      setLayout({
-                        previewWidth: Math.min(65, Math.max(25, layout.previewWidth + (e.key === 'ArrowLeft' ? 2 : -2)))
-                      });
-                    }
+                  className="preview-wrapper"
+                  style={{
+                    width: outputExpanded ? '100%' : `${layout.previewWidth}%`,
+                    maxWidth: outputExpanded ? '100%' : '65%',
+                    flex: outputExpanded ? 1 : undefined,
+                    position: 'relative'
                   }}
-                />
-
-                <div className="preview-wrapper" style={{ width: `${layout.previewWidth}%` }}>
-                  <PreviewPanel snapshot={currentSnapshot} modified={modified} onRun={run} theme={theme} />
+                >
+                  {isResizing && <div className="resize-overlay" />}
+                  <PreviewPanel
+                    snapshot={currentSnapshot}
+                    modified={modified}
+                    onRun={run}
+                    theme={theme}
+                    isExpanded={outputExpanded}
+                    onToggleExpand={() => setOutputExpanded(exp => !exp)}
+                  />
                 </div>
               </div>
 
               <div className="workspace-status">
                 <span>{Object.keys(active.files).length} files · React</span>
                 {github.connected ? (
-                  <button onClick={() => setGithubOpen(true)} className="icon-button" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 'auto', padding: '4px 8px' }}>
+                  <a
+                    href={github.connection?.url || `https://github.com/${github.connection?.owner}/${github.connection?.name}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="repo-link"
+                    title="Open GitHub repository"
+                    aria-label={`Open ${github.connection?.owner}/${github.connection?.name} repository on GitHub`}
+                  >
                     <Github size={14} />
                     <span>{github.connection?.owner}/{github.connection?.name}</span>
-                  </button>
+                    <ExternalLink size={11} style={{ opacity: 0.7 }} />
+                  </a>
                 ) : (
                   <span>Ctrl + Enter to run</span>
                 )}
@@ -535,8 +759,9 @@ export default function App() {
           ) : (
             <div className="workspace-empty">
               <Atom size={40} />
-              <h1>Your next idea starts here.</h1>
-              <p>Create a practical. Write some React. See it work.</p>
+              <h1>Your React practicals, all in one place.</h1>
+              <p>Create a practical, keep its question and files together, and run it anytime.</p>
+              <p>Question + files + runnable output — saved automatically.</p>
               <button className="primary-button" onClick={newPractical}>
                 <Plus size={17} /> New practical
               </button>

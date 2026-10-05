@@ -1,5 +1,5 @@
 import { Component, useMemo, useRef } from 'react';
-import { Play, RotateCw } from 'lucide-react';
+import { Play, RotateCw, Maximize2, Minimize2 } from 'lucide-react';
 import { generatePreviewHtml } from '../utils/localRunner';
 
 class PreviewBoundary extends Component {
@@ -16,7 +16,7 @@ class PreviewBoundary extends Component {
   }
 }
 
-export default function PreviewPanel({ snapshot, onRun, modified, theme = 'light' }) {
+export default function PreviewPanel({ snapshot, onRun, modified, theme = 'light', isExpanded = false, onToggleExpand }) {
   const container = useRef();
   const html = useMemo(() => {
     if (!snapshot) return '';
@@ -24,15 +24,29 @@ export default function PreviewPanel({ snapshot, onRun, modified, theme = 'light
   }, [snapshot, theme]);
 
   return (
-    <section className="preview-panel" ref={container}>
+    <section className={`preview-panel ${isExpanded ? 'expanded-mode' : ''}`} ref={container}>
       <div className="panel-title">
-        <span>Output</span>
-        <span className="preview-status">{snapshot && modified ? 'Run to see changes' : ''}</span>
-        {snapshot && (
-          <button className="icon-button" title="Refresh preview" aria-label="Refresh preview" onClick={onRun}>
-            <RotateCw size={15} />
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>Output</span>
+          <span className="preview-status">{snapshot && modified ? 'Run to see changes' : ''}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {snapshot && (
+            <button className="icon-button" title="Refresh preview" aria-label="Refresh preview" onClick={onRun}>
+              <RotateCw size={15} />
+            </button>
+          )}
+          {onToggleExpand && (
+            <button
+              className="icon-button expand-toggle"
+              title={isExpanded ? 'Exit fullscreen (Esc)' : 'Expand output (Esc to exit)'}
+              aria-label={isExpanded ? 'Exit fullscreen' : 'Expand output'}
+              onClick={onToggleExpand}
+            >
+              {isExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          )}
+        </div>
       </div>
       <div className="preview-body">
         {snapshot ? (
