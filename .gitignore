@@ -2,7 +2,12 @@ node_modules/
 dist/
 .sites-runtime/
 *.zip
+*.tar.gz
+*.tgz
 .env
 .env.*
 !.env.example
 .dev.vars
+.DS_Store
+Thumbs.db
+

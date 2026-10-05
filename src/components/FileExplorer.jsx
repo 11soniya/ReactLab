@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, FileCode2, FileJson, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, PanelLeftClose, Braces, Hash } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileJson, FilePlus2, Folder, FolderOpen, FolderPlus, MoreHorizontal, PanelLeftClose, Braces, Hash } from 'lucide-react';
 import { allFolders, basename, dirname } from '../utils/filesystem';
 export function FileIcon({ path, size = 15 }) { return path.endsWith('.css') ? <Hash size={size} className="css-icon"/> : path.endsWith('.json') ? <FileJson size={size} className="json-icon"/> : path.endsWith('.jsx') ? <span className="jsx-icon">⚛</span> : <Braces size={size} className="js-icon"/>; }
 export default function FileExplorer({ practical, onOpen, onSelectFolder, onAction, onCollapse }) {

@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { Atom, Plus, Search, MoreHorizontal, BookOpen, Check, HardDrive, PanelLeft, FolderTree, ChevronDown, ChevronUp, Pencil, Play, X, Code2, Sun, Moon, Github } from 'lucide-react';
+import { Atom, Plus, Search, MoreHorizontal, BookOpen, Check, HardDrive, PanelLeft, FolderTree, ChevronDown, ChevronUp, Pencil, Play, X, Sun, Moon, Github } from 'lucide-react';
 import { useWorkspace } from './hooks/useWorkspace';
 import { createPractical, duplicatePractical } from './utils/practicals';
-import { addEntry, renameEntry, deleteEntry, duplicateFile, basename, dirname, allFolders, within } from './utils/filesystem';
+import { addEntry, renameEntry, deleteEntry, duplicateFile, basename, dirname, within } from './utils/filesystem';
 import Dialog from './components/Dialog';
 import FileExplorer, { FileIcon } from './components/FileExplorer';
 import PreviewPanel from './components/PreviewPanel';

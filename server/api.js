@@ -4,7 +4,7 @@ const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const publicConnection = connection => connection && ({ owner: connection.owner, name: connection.name, url: connection.url, repoId: connection.repoId });
 function configured(env) { return !!(env.DB && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET && env.GITHUB_APP_ID && env.GITHUB_APP_SLUG && env.TOKEN_ENCRYPTION_KEY && env.APP_ORIGIN); }
-function ownerOf(request, env) { return request.headers.get('oai-authenticated-user-id') || (env.LOCAL_DEV === true ? 'local-development-user' : null); }
+function ownerOf(request, env) { return request.headers.get('x-user-id') || request.headers.get('oai-authenticated-user-id') || (env.LOCAL_DEV === true ? 'local-development-user' : null); }
 async function body(request) { if (!request.headers.get('Content-Type')?.startsWith('application/json')) throw fail('Expected JSON', 415); const text = await request.text(); if (text.length > 2_000_000) throw fail('Practical is too large to sync.', 413); try { return JSON.parse(text); } catch { throw fail('Invalid JSON'); } }
 function validatePractical(p) {
   if (!p || typeof p.id !== 'string' || !/^[\w-]{1,100}$/.test(p.id) || typeof p.title !== 'string' || p.title.length > 200 || typeof p.question !== 'string' || !p.files || !p.files['/src/App.jsx'] || Object.keys(p.files).length > 100 || !Array.isArray(p.folders)) throw fail('Invalid practical.');

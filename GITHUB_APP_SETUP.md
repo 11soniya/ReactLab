@@ -9,8 +9,8 @@ Open https://github.com/settings/apps/new while signed into the GitHub account t
 | Setting | Value |
 | --- | --- |
 | Name | A globally unique name, e.g. ReactLab by your-account |
-| Homepage | https://reactlab-practical-workspace.sneha1114.chatgpt.site |
-| Callback URL | https://reactlab-practical-workspace.sneha1114.chatgpt.site/api/github/callback |
+| Homepage | https://your-domain.com (or http://127.0.0.1:5173 for local dev) |
+| Callback URL | https://your-domain.com/api/github/callback |
 | Expire user authorization tokens | Enabled |
 | Request user authorization during installation | Disabled; ReactLab starts OAuth first |
 | Device flow | Disabled |
@@ -29,11 +29,11 @@ Record the App ID, app slug, and Client ID. Generate a Client Secret in GitHub. 
 
 ## 2. Configure server settings
 
-Set these using the hosting environment's secret/settings interface:
+Set these using your server / hosting environment's secret/settings interface:
 
 | Name | Value |
 | --- | --- |
-| APP_ORIGIN | https://reactlab-practical-workspace.sneha1114.chatgpt.site |
+| APP_ORIGIN | https://your-domain.com (or http://127.0.0.1:5173) |
 | GITHUB_APP_ID | App ID |
 | GITHUB_APP_SLUG | Slug from github.com/apps/your-app |
 | GITHUB_CLIENT_ID | GitHub App Client ID |
@@ -42,7 +42,7 @@ Set these using the hosting environment's secret/settings interface:
 
 Generate the encryption key locally with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` and put it directly into the secret setting. Never commit it. Rotating the encryption key invalidates existing connections; users reconnect.
 
-Sites provides the D1 `DB` binding and applies the versioned SQL migration. Auth endpoints require the platform's verified `oai-authenticated-user-id`; never expose this Worker on a direct origin where clients can forge that header. The published private Site supplies the boundary. Vite serves a setup-required response locally; real local OAuth requires a D1-backed Worker environment and a separately registered callback origin, not pretending that the static frontend can complete OAuth.
+The backend provides the database `DB` binding and applies the versioned SQL migration. Vite serves a setup-required response locally; real local OAuth requires a D1/SQLite-backed Worker environment and a registered callback origin.
 
 ## 3. Connect and verify
 
