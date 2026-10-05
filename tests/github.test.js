@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { practicalEntries, syncPractical, connectRepository } from '../src/utils/github.js';
+import { practicalEntries, syncPractical, connectRepository } from '../server/github.js';
 import { createPractical } from '../src/utils/practicals.js';
 const connection = { owner: 'student', name: 'reactlab-practicals', repoId: 7, url: 'https://github.com/student/reactlab-practicals', author: { name: 'Student', email: '1+student@users.noreply.github.com' } };
 function mockApi(replies) { const calls = []; const fetcher = async (url, options) => { calls.push({ path: url.replace('https://api.github.com', ''), method: options.method, body: options.body && JSON.parse(options.body), headers: options.headers }); const reply = replies.shift(); assert(reply, `Unexpected request ${url}`); return { ok: !reply.status || reply.status < 400, status: reply.status || 200, json: async () => reply.data || reply }; }; return { fetcher, calls }; }
@@ -45,3 +45,4 @@ test('authentication errors remain actionable', async () => {
   const mock = mockApi([{ status: 401, data: {} }]);
   await assert.rejects(connectRepository('token', 'reactlab-practicals', null, mock.fetcher), /expired or is invalid/);
 });
+

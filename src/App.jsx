@@ -21,7 +21,16 @@ export default function App() {
   function run() { if (activeRef.current) setSnapshot({ practical: structuredClone(activeRef.current), runId: crypto.randomUUID() }); }
   useEffect(() => { const handler = e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } }; window.addEventListener('keydown', handler); window.addEventListener('reactlab-run', run); return () => { window.removeEventListener('keydown', handler); window.removeEventListener('reactlab-run', run); }; }, []);
   useEffect(() => { setSnapshot(null); setNotice(''); }, [active?.id]);
-  useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 7000); return () => clearTimeout(timer); }, [notice]);
+  useEffect(() => {
+    const closeMenus = e => { if (!e.target.closest('.row-menu')) document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open')); };
+    const handleEscape = e => { if (e.key === 'Escape') document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open')); };
+    document.addEventListener('pointerdown', closeMenus);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenus);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
   function openFile(path) { update(p => ({ ...p, activeFile: path, selectedFolder: dirname(path), openFiles: [...new Set([...p.openFiles, path])] })); }
   function closeFile(path) { update(p => { const tabs = p.openFiles.filter(f => f !== path); return { ...p, openFiles: tabs, activeFile: p.activeFile === path ? tabs.at(-1) || '/src/App.jsx' : p.activeFile }; }); }
   function newPractical() { setDialog({ type: 'practical', title: 'A new practical. A fresh start.', description: 'Keep your question, code, and output together.', onSubmit: values => { const p = createPractical(values.title, values.question, values.starter === 'simple' ? values.component : null); if (!p.title) throw new Error('Give your practical a title.'); setData(d => ({ ...d, practicals: [...d.practicals, p], activeId: p.id })); setSearch(''); } }); }
@@ -59,8 +68,8 @@ export default function App() {
         <button className="primary-button new-practical" onClick={newPractical} disabled={!!loadError}><Plus size={17}/> New practical</button>
         <label className="search-box"><Search size={16}/><input aria-label="Search practicals" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)}/></label>
         <div className="practical-list">{filtered.map(p => <div className={`practical-item ${p.id === active?.id ? 'selected' : ''}`} key={p.id}>
-          <button className="practical-select" onClick={() => setData(d => ({ ...d, activeId: p.id }))}><BookOpen size={16}/><span>{p.title}</span></button>
-          <details className="row-menu"><summary aria-label={`Actions for ${p.title}`}><MoreHorizontal size={17}/></summary><div className="dropdown">{['rename', 'duplicate', 'delete'].map(action => <button className={action === 'delete' ? 'danger-text' : ''} key={action} onClick={e => { e.currentTarget.closest('details').open = false; practicalAction(action, p); }}>{action[0].toUpperCase() + action.slice(1)}</button>)}</div></details>
+          <button className="practical-select" onClick={() => { document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open')); setData(d => ({ ...d, activeId: p.id })); }}><BookOpen size={16}/><span>{p.title}</span></button>
+          <details className="row-menu" onToggle={e => { if (e.currentTarget.open) document.querySelectorAll('details.row-menu[open]').forEach(d => { if (d !== e.currentTarget) d.removeAttribute('open'); }); }}><summary aria-label={`Actions for ${p.title}`}><MoreHorizontal size={17}/></summary><div className="dropdown">{['rename', 'duplicate', 'delete'].map(action => <button className={action === 'delete' ? 'danger-text' : ''} key={action} onClick={e => { e.stopPropagation(); e.currentTarget.closest('details')?.removeAttribute('open'); practicalAction(action, p); }}>{action[0].toUpperCase() + action.slice(1)}</button>)}</div></details>
         </div>)}{filtered.length === 0 && search && <p className="search-empty">No matching practicals.</p>}</div>
         <div className="sidebar-note"><HardDrive size={15}/><span>Saved in this browser</span></div>
       </aside>}
@@ -80,7 +89,7 @@ export default function App() {
               <div className="editor-foot"><span>{active.activeFile}</span><span>Ln {position.lineNumber}, Col {position.column}</span></div>
             </section>
             <div className="resize-handle" role="separator" aria-label="Resize output panel" aria-orientation="vertical" aria-valuenow={Math.round(layout.previewWidth)} tabIndex={0} onPointerDown={startResize} onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setLayout({ previewWidth: Math.min(65, Math.max(25, layout.previewWidth + (e.key === 'ArrowLeft' ? 2 : -2))) }); } }}/>
-            <div className="preview-wrapper" style={{ width: `${layout.previewWidth}%` }}><PreviewPanel snapshot={currentSnapshot} modified={modified} onRun={run} onReady={practical => github.sync(practical)}/></div>
+            <div className="preview-wrapper" style={{ width: `${layout.previewWidth}%` }}><PreviewPanel snapshot={currentSnapshot} modified={modified} onRun={run} onReady={practical => github.sync(practical)} theme={theme}/></div>
           </div>
           <div className="workspace-status"><span>{Object.keys(active.files).length} files · React</span>{data.github ? <button onClick={() => setGithubOpen(true)} className={github.error ? 'error-text' : ''}><Github size={14}/>{github.status}</button> : <span>Ctrl + Enter to run</span>}</div>
         </> : <div className="workspace-empty"><Atom size={40}/><h1>Your next idea starts here.</h1><p>Create a practical. Write some React. See it work.</p><button className="primary-button" onClick={newPractical}><Plus size={17}/> New practical</button></div>}

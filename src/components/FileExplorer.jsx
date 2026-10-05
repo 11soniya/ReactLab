@@ -13,15 +13,15 @@ export default function FileExplorer({ practical, onOpen, onSelectFolder, onActi
     const depth = path.split('/').length - 2; const isOpen = !collapsed[path];
     return <div key={path}>
       <div className={`tree-row ${!folder && practical.activeFile === path ? 'active' : ''} ${folder && practical.selectedFolder === path ? 'selected-folder' : ''}`} style={{ paddingLeft: 13 + depth * 14 }}>
-        <button className="tree-name" title={path} onClick={() => { if (folder) { onSelectFolder(path); setCollapsed(c => ({ ...c, [path]: !c[path] })); } else onOpen(path); }}>
+        <button className="tree-name" title={path} onClick={() => { document.querySelectorAll('details.row-menu[open]').forEach(el => el.removeAttribute('open')); if (folder) { onSelectFolder(path); setCollapsed(c => ({ ...c, [path]: !c[path] })); } else onOpen(path); }}>
           {folder ? <>{isOpen ? <ChevronDown size={12}/> : <ChevronRight size={12}/>} {isOpen ? <FolderOpen size={15}/> : <Folder size={15}/>}</> : <FileIcon path={path}/>}
           <span>{basename(path)}</span>
         </button>
-        {path !== '/src' && <details className="row-menu"><summary aria-label={`Actions for ${basename(path)}`}><MoreHorizontal size={15}/></summary><div className="dropdown">{folder && <><button onClick={e => action(e, 'file', path)}>New file</button><button onClick={e => action(e, 'folder', path)}>New folder</button></>}{path !== '/src/App.jsx' && <button onClick={e => action(e, 'rename', path)}>Rename</button>}{!folder && <button onClick={e => action(e, 'duplicate', path)}>Duplicate file</button>}{path !== '/src/App.jsx' && <button className="danger-text" onClick={e => action(e, 'delete', path)}>Delete</button>}</div></details>}
+        {path !== '/src' && <details className="row-menu" onToggle={e => { if (e.currentTarget.open) document.querySelectorAll('details.row-menu[open]').forEach(d => { if (d !== e.currentTarget) d.removeAttribute('open'); }); }}><summary aria-label={`Actions for ${basename(path)}`}><MoreHorizontal size={15}/></summary><div className="dropdown">{folder && <><button onClick={e => action(e, 'file', path)}>New file</button><button onClick={e => action(e, 'folder', path)}>New folder</button></>}{path !== '/src/App.jsx' && <button onClick={e => action(e, 'rename', path)}>Rename</button>}{!folder && <button onClick={e => action(e, 'duplicate', path)}>Duplicate file</button>}{path !== '/src/App.jsx' && <button className="danger-text" onClick={e => action(e, 'delete', path)}>Delete</button>}</div></details>}
       </div>
       {folder && isOpen && tree(path)}
     </div>;
   }
-  function action(e, type, path) { e.currentTarget.closest('details').open = false; onAction(type, path); }
+  function action(e, type, path) { e.stopPropagation(); e.currentTarget.closest('details')?.removeAttribute('open'); onAction(type, path); }
   return <aside className="file-explorer"><div className="panel-title"><span>EXPLORER</span><button className="icon-button" title="Collapse files" onClick={onCollapse}><PanelLeftClose size={15}/></button></div><div className="explorer-subtitle"><ChevronDown size={12}/> PRACTICAL FILES</div><div className="file-tree">{row('/src', true)}</div><div className="file-actions"><button onClick={() => onAction('file', practical.selectedFolder || '/src')}><FilePlus2 size={15}/> New file</button><button onClick={() => onAction('folder', practical.selectedFolder || '/src')}><FolderPlus size={15}/> New folder</button></div><div className="explorer-foot"><span>{Object.keys(practical.files).length} files</span><span>React</span></div></aside>;
 }
