@@ -30,11 +30,27 @@ function configured(env) {
 }
 
 function ownerOf(request, env) {
-  return (
+  const explicit =
     request.headers.get('x-user-id') ||
-    request.headers.get('oai-authenticated-user-id') ||
-    (env.LOCAL_DEV === true ? 'local-development-user' : null)
-  );
+    request.headers.get('oai-authenticated-user-id');
+  if (explicit) return explicit;
+
+  if (env.LOCAL_DEV === true) return 'local-development-user';
+
+  const uid = cookie(request, 'reactlab_uid');
+  if (uid) return uid;
+
+  const sessionCookie = cookie(request, 'reactlab_session');
+  if (sessionCookie) return `session_${sessionCookie.slice(0, 16)}`;
+
+  const oauthCookie = cookie(request, 'reactlab_oauth');
+  if (oauthCookie) return `oauth_${oauthCookie.slice(0, 16)}`;
+
+  if (env.STANDALONE === true || env.STANDALONE_WEB === true) {
+    return 'reactlab-user';
+  }
+
+  return null;
 }
 
 async function body(request) {

@@ -1,12 +1,11 @@
 import { build } from 'esbuild';
 
 await build({
-  entryPoints: ['server/index.js'],
+  entryPoints: ['server/server.js'],
   bundle: true,
   format: 'esm',
-  platform: 'browser',
-  target: 'es2022',
+  platform: 'node',
+  target: 'node20',
   outfile: 'dist/server/index.js',
-  loader: { '.html': 'text' }
+  packages: 'external'
 });
-
