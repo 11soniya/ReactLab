@@ -7,7 +7,20 @@ import { handleApi } from './api.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '..');
+
+function resolveRootDir() {
+  const candidate1 = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.resolve(candidate1, 'dist/client')) || fs.existsSync(path.resolve(candidate1, 'package.json'))) {
+    return candidate1;
+  }
+  const candidate2 = path.resolve(__dirname, '../..');
+  if (fs.existsSync(path.resolve(candidate2, 'dist/client')) || fs.existsSync(path.resolve(candidate2, 'package.json'))) {
+    return candidate2;
+  }
+  return process.cwd();
+}
+
+const rootDir = resolveRootDir();
 const clientDistDir = path.resolve(rootDir, 'dist/client');
 
 const MIME_TYPES = {
@@ -87,21 +100,22 @@ export function loadProductionSettings() {
     ...process.env
   };
 
-  const port = parseInt(merged.PORT || '3000', 10);
-  const appOrigin = merged.APP_ORIGIN || `http://127.0.0.1:${port}`;
+  const port = Number(process.env.PORT || merged.PORT) || 3000;
+  const host = process.env.HOST || merged.HOST || '0.0.0.0';
+  const appOrigin = process.env.APP_ORIGIN || merged.APP_ORIGIN || `http://127.0.0.1:${port}`;
 
-  const db = initDatabase(merged.DATABASE_PATH);
+  const db = initDatabase(process.env.DATABASE_PATH || merged.DATABASE_PATH);
 
   return {
     DB: db,
     PORT: port,
-    HOST: merged.HOST || '0.0.0.0',
+    HOST: host,
     APP_ORIGIN: appOrigin,
-    GITHUB_CLIENT_ID: merged.GITHUB_CLIENT_ID || '',
-    GITHUB_CLIENT_SECRET: merged.GITHUB_CLIENT_SECRET || '',
-    GITHUB_APP_ID: merged.GITHUB_APP_ID || '',
-    GITHUB_APP_SLUG: merged.GITHUB_APP_SLUG || '',
-    TOKEN_ENCRYPTION_KEY: merged.TOKEN_ENCRYPTION_KEY || '',
+    GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID || merged.GITHUB_CLIENT_ID || '',
+    GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET || merged.GITHUB_CLIENT_SECRET || '',
+    GITHUB_APP_ID: process.env.GITHUB_APP_ID || merged.GITHUB_APP_ID || '',
+    GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG || merged.GITHUB_APP_SLUG || '',
+    TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY || merged.TOKEN_ENCRYPTION_KEY || '',
     STANDALONE: true,
     LOCAL_DEV: false
   };
@@ -117,6 +131,25 @@ export function createProductionServer(customSettings = {}) {
     try {
       const origin = settings.APP_ORIGIN ? new URL(settings.APP_ORIGIN).origin : `http://${req.headers.host || '127.0.0.1:3000'}`;
       const url = new URL(req.url, origin);
+
+      // Health check endpoint (for Render and load balancer probes)
+      if (url.pathname === '/health' || url.pathname === '/health/') {
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          if (req.method === 'HEAD') {
+            res.end();
+            return;
+          }
+          res.end(JSON.stringify({ status: 'ok' }));
+          return;
+        }
+        res.statusCode = 405;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ message: 'Method Not Allowed' }));
+        return;
+      }
 
       // 1. API routes (/api/github/*)
       if (url.pathname.startsWith('/api/github/')) {
@@ -259,16 +292,23 @@ export function createProductionServer(customSettings = {}) {
   return { server, settings };
 }
 
-// Auto-start if invoked directly via `node server/server.js` or `node server/index.js`
+// Auto-start if invoked directly via `node server/server.js`, `node server/index.js`, or `node dist/server/index.js`
 const isMain = process.argv[1] && (
   path.resolve(process.argv[1]) === path.resolve(__filename) ||
-  path.resolve(process.argv[1]) === path.resolve(rootDir, 'server/index.js')
+  path.resolve(process.argv[1]) === path.resolve(rootDir, 'server/server.js') ||
+  path.resolve(process.argv[1]) === path.resolve(rootDir, 'server/index.js') ||
+  path.resolve(process.argv[1]) === path.resolve(rootDir, 'server') ||
+  path.resolve(process.argv[1]) === path.resolve(rootDir, 'dist/server/index.js') ||
+  path.resolve(process.argv[1]) === path.resolve(rootDir, 'dist/server')
 );
 
 if (isMain) {
   const { server, settings } = createProductionServer();
-  server.listen(settings.PORT, settings.HOST, () => {
-    console.log(`ReactLab production server listening on http://${settings.HOST}:${settings.PORT}`);
+  const port = Number(process.env.PORT) || settings.PORT || 3000;
+  const host = settings.HOST || '0.0.0.0';
+
+  server.listen(port, host, () => {
+    console.log(`ReactLab production server listening on http://${host}:${port}`);
     console.log(`Configured APP_ORIGIN: ${settings.APP_ORIGIN}`);
     console.log(`GitHub App configured: ${Boolean(settings.GITHUB_CLIENT_ID && settings.GITHUB_CLIENT_SECRET)}`);
   });

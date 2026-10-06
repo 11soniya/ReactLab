@@ -60,4 +60,15 @@ test('production server serves static assets, SPA routes, and handles GitHub API
   assert.match(startData.url, /github\.com\/login\/oauth\/authorize/);
   const oauthCookie = startRes.headers.get('set-cookie');
   assert.match(oauthCookie, /reactlab_oauth=/);
+
+  // 6. Health check endpoint returns 200 with status ok
+  const healthRes = await fetch(`${baseUrl}/health`);
+  assert.equal(healthRes.status, 200);
+  assert.match(healthRes.headers.get('content-type'), /application\/json/);
+  const healthData = await healthRes.json();
+  assert.deepEqual(healthData, { status: 'ok' });
+
+  // 7. Health check HEAD request returns 200
+  const healthHeadRes = await fetch(`${baseUrl}/health`, { method: 'HEAD' });
+  assert.equal(healthHeadRes.status, 200);
 });
