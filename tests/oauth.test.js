@@ -179,3 +179,141 @@ test('installation permits only the dedicated repository and correct GitHub App'
   assert.equal(await check('selected', 1, 99), false);
   assert.equal(await check('selected', 1), true);
 });
+
+test('standalone production OAuth lifecycle without x-user-id header works end-to-end', async () => {
+  const env = { ...environment(), STANDALONE: true };
+
+  // 1. Start OAuth in standalone mode (no x-user-id header)
+  const startReq = new Request('https://reactlab.test/api/github/start', {
+    method: 'POST',
+    headers: { Origin: 'https://reactlab.test', 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const start = await handleApi(startReq, env);
+  assert.equal(start.status, 200);
+
+  const auth = new URL((await start.json()).url);
+  const flowCookie = start.headers.get('set-cookie').split(';')[0];
+  assert.match(flowCookie, /reactlab_oauth=/);
+
+  const fetcher = async (url, options) => {
+    if (url.includes('access_token')) {
+      const body = JSON.parse(options.body);
+      assert.equal(await hash(body.code_verifier), auth.searchParams.get('code_challenge'));
+      return Response.json({ access_token: 'ghu_prod-secret', expires_in: 28800 });
+    }
+    assert.equal(url, 'https://api.github.com/user');
+    return Response.json({ id: 456, login: 'developer', name: 'Developer' });
+  };
+
+  // 2. Callback in standalone mode with cookie
+  const callbackReq = new Request(
+    `https://reactlab.test/api/github/callback?code=prod-code&state=${auth.searchParams.get('state')}`,
+    { headers: { Cookie: flowCookie } }
+  );
+  const callbackRes = await handleApi(callbackReq, env, fetcher);
+  assert.equal(callbackRes.status, 303);
+  assert.equal(callbackRes.headers.get('location'), 'https://reactlab.test/?github=authorized');
+
+  const sessionCookie = callbackRes.headers.get('set-cookie').split(';')[0];
+  assert.match(sessionCookie, /reactlab_session=/);
+
+  // 3. Status check with session cookie
+  const statusReq = new Request('https://reactlab.test/api/github/status', {
+    headers: { Cookie: sessionCookie }
+  });
+  const statusRes = await handleApi(statusReq, env);
+  assert.equal(statusRes.status, 200);
+  const statusData = await statusRes.json();
+  assert.equal(statusData.authorized, true);
+  assert.equal(statusData.user.login, 'developer');
+});
+
+test('slow authorization delays (0s, 30s, 2m, 5m) succeed, while expired transactions (>10m) fail', async () => {
+  const delays = [
+    { name: 'immediate (0s)', elapsedMs: 0, shouldSucceed: true },
+    { name: '30s delay', elapsedMs: 30_000, shouldSucceed: true },
+    { name: '2m delay', elapsedMs: 120_000, shouldSucceed: true },
+    { name: '5m delay', elapsedMs: 300_000, shouldSucceed: true },
+    { name: 'expired (>10m)', elapsedMs: 601_000, shouldSucceed: false }
+  ];
+
+  for (const { name, elapsedMs, shouldSucceed } of delays) {
+    const env = { ...environment(), STANDALONE: true };
+
+    const startReq = new Request('https://reactlab.test/api/github/start', {
+      method: 'POST',
+      headers: { Origin: 'https://reactlab.test', 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const start = await handleApi(startReq, env);
+    assert.equal(start.status, 200);
+
+    const auth = new URL((await start.json()).url);
+    const flowCookie = start.headers.get('set-cookie').split(';')[0];
+    const state = auth.searchParams.get('state');
+
+    // Simulate time passage by adjusting expires_at in the database
+    if (elapsedMs > 0) {
+      env.sqlite.prepare('UPDATE github_oauth_states SET expires_at = expires_at - ?').run(elapsedMs);
+    }
+
+    const fetcher = async (url) => {
+      if (url.includes('access_token')) {
+        return Response.json({ access_token: 'ghu_delay_token', expires_in: 28800 });
+      }
+      return Response.json({ id: 789, login: 'slow-user' });
+    };
+
+    const callbackReq = new Request(
+      `https://reactlab.test/api/github/callback?code=delay-code&state=${state}`,
+      { headers: { Cookie: flowCookie } }
+    );
+    const res = await handleApi(callbackReq, env, fetcher);
+
+    if (shouldSucceed) {
+      assert.equal(res.status, 303, `Expected ${name} to succeed with 303 redirect`);
+    } else {
+      assert.equal(res.status, 400, `Expected ${name} to fail with 400`);
+      const body = await res.json();
+      assert.match(body.message, /Authorization expired/);
+    }
+  }
+});
+
+test('callback rejects missing state, wrong state, and missing browser cookie', async () => {
+  const env = { ...environment(), STANDALONE: true };
+
+  const startReq = new Request('https://reactlab.test/api/github/start', {
+    method: 'POST',
+    headers: { Origin: 'https://reactlab.test', 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const start = await handleApi(startReq, env);
+  const auth = new URL((await start.json()).url);
+  const flowCookie = start.headers.get('set-cookie').split(';')[0];
+  const state = auth.searchParams.get('state');
+
+  // 1. Missing state param
+  const noState = await handleApi(
+    new Request('https://reactlab.test/api/github/callback?code=c1', { headers: { Cookie: flowCookie } }),
+    env
+  );
+  assert.equal(noState.status, 400);
+
+  // 2. Missing cookie
+  const noCookie = await handleApi(
+    new Request(`https://reactlab.test/api/github/callback?code=c1&state=${state}`),
+    env
+  );
+  assert.equal(noCookie.status, 400);
+
+  // 3. Wrong state param
+  const wrongState = await handleApi(
+    new Request('https://reactlab.test/api/github/callback?code=c1&state=wrong-state-value', {
+      headers: { Cookie: flowCookie }
+    }),
+    env
+  );
+  assert.equal(wrongState.status, 400);
+});

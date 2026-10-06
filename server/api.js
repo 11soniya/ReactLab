@@ -40,12 +40,6 @@ function ownerOf(request, env) {
   const uid = cookie(request, 'reactlab_uid');
   if (uid) return uid;
 
-  const sessionCookie = cookie(request, 'reactlab_session');
-  if (sessionCookie) return `session_${sessionCookie.slice(0, 16)}`;
-
-  const oauthCookie = cookie(request, 'reactlab_oauth');
-  if (oauthCookie) return `oauth_${oauthCookie.slice(0, 16)}`;
-
   if (env.STANDALONE === true || env.STANDALONE_WEB === true) {
     return 'reactlab-user';
   }
@@ -205,6 +199,8 @@ export async function handleApi(request, env, fetcher = fetch) {
         )
         .run();
 
+      console.log('OAuth start created: true');
+
       const auth = new URL('https://github.com/login/oauth/authorize');
       auth.search = new URLSearchParams({
         client_id: env.GITHUB_CLIENT_ID,
@@ -226,15 +222,37 @@ export async function handleApi(request, env, fetcher = fetch) {
     if (path === '/api/github/callback' && request.method === 'GET') {
       const state = url.searchParams.get('state');
       const browser = cookie(request, 'reactlab_oauth');
-      if (!state || !browser) throw fail('Missing authorization state. Start again.');
+      if (!state || !browser) {
+        console.log('OAuth callback state received: false');
+        throw fail('Missing authorization state. Start again.');
+      }
+      console.log('OAuth callback state received: true');
+
+      const stateHash = await hash(state);
+      const browserHash = await hash(browser);
+      const now = Date.now();
 
       const pending = await env.DB.prepare(
         'DELETE FROM github_oauth_states WHERE id = ? AND owner_id = ? AND browser_hash = ? AND expires_at > ? RETURNING payload'
       )
-        .bind(await hash(state), owner, await hash(browser), Date.now())
+        .bind(stateHash, owner, browserHash, now)
         .first();
 
-      if (!pending) throw fail('Authorization expired or was already used. Start again.');
+      if (!pending) {
+        const existing = await env.DB.prepare('SELECT expires_at FROM github_oauth_states WHERE id = ?')
+          .bind(stateHash)
+          .first()
+          .catch(() => null);
+        if (existing && existing.expires_at <= now) {
+          console.log('OAuth transaction expired: true');
+        } else {
+          console.log('OAuth transaction expired: false');
+        }
+        console.log('OAuth transaction found: false');
+        throw fail('Authorization expired or was already used. Start again.');
+      }
+
+      console.log('OAuth transaction found: true');
 
       if (url.searchParams.has('error')) {
         return new Response(null, {
@@ -252,6 +270,8 @@ export async function handleApi(request, env, fetcher = fetch) {
       if (!code) throw fail('Missing authorization code.');
 
       const { verifier } = await unseal(pending.payload, env.TOKEN_ENCRYPTION_KEY, owner);
+      console.log('PKCE verifier found: ' + Boolean(verifier));
+
       const response = await fetcher('https://github.com/login/oauth/access_token', {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -267,8 +287,10 @@ export async function handleApi(request, env, fetcher = fetch) {
 
       const tokens = await response.json();
       if (!response.ok || !tokens.access_token || tokens.error) {
+        console.log('Token exchange succeeded: false');
         throw fail('GitHub authorization failed. Please reconnect.', 401);
       }
+      console.log('Token exchange succeeded: true');
 
       const user = await githubClient(tokens.access_token, fetcher)('/user');
       const id = random();
@@ -289,6 +311,8 @@ export async function handleApi(request, env, fetcher = fetch) {
       )
         .bind(await hash(id), owner, String(user.id), tokenCipher, expires)
         .run();
+
+      console.log('Session created: true');
 
       const headers = new Headers({
         Location: `${origin}/?github=authorized`,
