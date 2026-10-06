@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { createStarter } from '../utils/practicals';
 import { loadWorkspace, saveWorkspace } from '../utils/storage';
 function initialize() {
-  try { const saved = loadWorkspace(); if (saved) return { data: saved, error: null }; const starter = createStarter(); return { data: { version: 1, practicals: [starter], activeId: starter.id, layout: { sidebar: true, files: true, question: true, previewWidth: 38 } }, error: null }; }
-  catch (error) { return { data: { version: 1, practicals: [], activeId: null, layout: {} }, error: error.message }; }
+  try {
+    const saved = loadWorkspace();
+    if (saved) return { data: saved, error: null };
+    return {
+      data: {
+        version: 1,
+        practicals: [],
+        activeId: null,
+        layout: { sidebar: true, files: true, question: true, previewWidth: 38 }
+      },
+      error: null
+    };
+  } catch (error) {
+    return { data: { version: 1, practicals: [], activeId: null, layout: {} }, error: error.message };
+  }
 }
 export function useWorkspace() {
   const [initial] = useState(initialize); const [data, setData] = useState(initial.data); const [status, setStatus] = useState(initial.error ? 'Save unavailable' : 'Saved locally'); const latest = useRef(data);
