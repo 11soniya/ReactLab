@@ -1,11 +1,14 @@
 import { loadEnv } from 'vite';
 import { handleApi } from './api.js';
+import { handleClassroomApi } from './classroom-api.js';
+import { createClassroomDb } from './classroom-db.js';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
 let localSqlite = null;
 let localDB = null;
+let localClassroomDb = null;
 
 function getLocalDB(rootDir = process.cwd()) {
   if (globalThis.__reactlab_db) return globalThis.__reactlab_db;
@@ -31,6 +34,20 @@ function getLocalDB(rootDir = process.cwd()) {
   };
   globalThis.__reactlab_db = localDB;
   return localDB;
+}
+
+function getClassroomDB(rootDir = process.cwd()) {
+  if (globalThis.__reactlab_classroom_db) return globalThis.__reactlab_classroom_db;
+  if (localClassroomDb) return localClassroomDb;
+
+  getLocalDB(rootDir);
+  localClassroomDb = createClassroomDb({ sqliteInstance: localSqlite });
+  localClassroomDb.init().catch(err => {
+    console.error('Failed to init dev classroom db:', err);
+  });
+
+  globalThis.__reactlab_classroom_db = localClassroomDb;
+  return localClassroomDb;
 }
 
 function parseEnvFile(filePath) {
@@ -72,12 +89,14 @@ export function loadDevSettings(root = process.cwd()) {
 
   return {
     DB: getLocalDB(root),
+    CLASSROOM_DB: getClassroomDB(root),
     APP_ORIGIN: merged.APP_ORIGIN || 'http://127.0.0.1:5173',
     GITHUB_CLIENT_ID: merged.GITHUB_CLIENT_ID || '',
     GITHUB_CLIENT_SECRET: merged.GITHUB_CLIENT_SECRET || '',
     GITHUB_APP_ID: merged.GITHUB_APP_ID || '',
     GITHUB_APP_SLUG: merged.GITHUB_APP_SLUG || '',
     TOKEN_ENCRYPTION_KEY: merged.TOKEN_ENCRYPTION_KEY || 'dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw==',
+    TEACHER_SECRET_KEY: merged.TEACHER_SECRET_KEY || '',
     LOCAL_DEV: true,
     ...merged
   };
@@ -85,10 +104,10 @@ export function loadDevSettings(root = process.cwd()) {
 
 export function githubDev() {
   return {
-    name: 'reactlab-github-api',
+    name: 'reactlab-api-dev',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url || !req.url.startsWith('/api/github/')) return next();
+        if (!req.url || (!req.url.startsWith('/api/github/') && !req.url.startsWith('/api/classroom/'))) return next();
 
         const rootDir = server.config.root || process.cwd();
         const settings = loadDevSettings(rootDir);
@@ -120,7 +139,10 @@ export function githubDev() {
         });
 
         try {
-          const result = await handleApi(requestObj, settings);
+          const result = req.url.startsWith('/api/classroom/')
+            ? await handleClassroomApi(requestObj, settings)
+            : await handleApi(requestObj, settings);
+
           res.statusCode = result.status;
 
           if (typeof result.headers.getSetCookie === 'function') {

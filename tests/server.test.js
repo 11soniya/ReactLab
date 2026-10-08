@@ -71,4 +71,30 @@ test('production server serves static assets, SPA routes, and handles GitHub API
   // 7. Health check HEAD request returns 200
   const healthHeadRes = await fetch(`${baseUrl}/health`, { method: 'HEAD' });
   assert.equal(healthHeadRes.status, 200);
+
+  // 8. Classroom API: Unauthenticated /auth/me returns user: null
+  const classroomMeRes = await fetch(`${baseUrl}/api/classroom/auth/me`);
+  assert.equal(classroomMeRes.status, 200);
+  const classroomMeData = await classroomMeRes.json();
+  assert.equal(classroomMeData.user, null);
+
+  // 9. Classroom API: Student Signup over HTTP
+  const signupRes = await fetch(`${baseUrl}/api/classroom/auth/signup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: baseUrl
+    },
+    body: JSON.stringify({
+      email: 'http_student@example.com',
+      name: 'HTTP Student',
+      password: 'password123',
+      role: 'student'
+    })
+  });
+  assert.equal(signupRes.status, 201);
+  const signupData = await signupRes.json();
+  assert.equal(signupData.user.email, 'http_student@example.com');
+  const sessionCookie = signupRes.headers.get('set-cookie');
+  assert.match(sessionCookie, /reactlab_classroom_session=/);
 });

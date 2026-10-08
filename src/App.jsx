@@ -22,7 +22,9 @@ import {
   ExternalLink,
   Download,
   Upload,
-  Shield
+  Shield,
+  GraduationCap,
+  Code2
 } from 'lucide-react';
 import { useWorkspace } from './hooks/useWorkspace';
 import { createPractical, duplicatePractical } from './utils/practicals';
@@ -46,11 +48,13 @@ import PreviewPanel from './components/PreviewPanel';
 import GitHubDialog from './components/GitHubDialog';
 import PrivacyBanner from './components/PrivacyBanner';
 import PrivacyDialog from './components/PrivacyDialog';
+import ClassroomView from './components/Classroom/ClassroomView';
 import { useGitHub } from './hooks/useGitHub';
 
 const CodeEditor = lazy(() => import('./components/CodeEditor'));
 
 export default function App() {
+  const [activeModule, setActiveModule] = useState('workspace'); // 'workspace' | 'classroom'
   const { data, setData, active, update, status, loadError, setLayout } = useWorkspace();
   const [githubOpen, setGithubOpen] = useState(false);
   const github = useGitHub(data.github, connection => setData(d => ({ ...d, github: connection })));
@@ -452,14 +456,38 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand">
-          <Atom size={27} />
-          <strong>ReactLab</strong>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+          <div className="brand">
+            <Atom size={27} />
+            <strong>ReactLab</strong>
+          </div>
+          <nav className="nav-workspace-switcher" role="tablist" aria-label="Workspace experiences">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeModule === 'workspace'}
+              className={`nav-tab-btn ${activeModule === 'workspace' ? 'active' : ''}`}
+              onClick={() => setActiveModule('workspace')}
+            >
+              <Code2 size={15} /> Personal Workspace
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeModule === 'classroom'}
+              className={`nav-tab-btn ${activeModule === 'classroom' ? 'active' : ''}`}
+              onClick={() => setActiveModule('classroom')}
+            >
+              <GraduationCap size={15} /> Classroom
+            </button>
+          </nav>
         </div>
         <div className="header-actions">
-          <span className="save-status" role="status">
-            {status === 'Saved locally' && <Check size={15} />} {status}
-          </span>
+          {activeModule === 'workspace' && (
+            <span className="save-status" role="status">
+              {status === 'Saved locally' && <Check size={15} />} {status}
+            </span>
+          )}
           <button
             className="theme-toggle"
             aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
@@ -467,24 +495,29 @@ export default function App() {
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button
-            className="secondary-button github-button"
-            onClick={() => setGithubOpen(true)}
-            title={github.connected ? `Connected to ${github.connection?.owner}/${github.connection?.name}` : 'Connect GitHub'}
-          >
-            <Github size={17} />
-            {github.connected ? (
-              <span>@{github.user?.login || github.connection?.owner}</span>
-            ) : github.authorized ? (
-              <span>Choose repository</span>
-            ) : (
-              <span>Connect GitHub</span>
-            )}
-          </button>
+          {activeModule === 'workspace' && (
+            <button
+              className="secondary-button github-button"
+              onClick={() => setGithubOpen(true)}
+              title={github.connected ? `Connected to ${github.connection?.owner}/${github.connection?.name}` : 'Connect GitHub'}
+            >
+              <Github size={17} />
+              {github.connected ? (
+                <span>@{github.user?.login || github.connection?.owner}</span>
+              ) : github.authorized ? (
+                <span>Choose repository</span>
+              ) : (
+                <span>Connect GitHub</span>
+              )}
+            </button>
+          )}
         </div>
       </header>
 
-      <div className="app-body">
+      {activeModule === 'classroom' ? (
+        <ClassroomView theme={theme} />
+      ) : (
+        <div className="app-body">
         {layout.sidebar && (
           <aside className="lab-sidebar">
             <div className="lab-heading">
@@ -821,6 +854,7 @@ export default function App() {
           )}
         </main>
       </div>
+      )}
 
       {notice && (
         <div className={`toast ${notice.isError ? 'form-error' : ''}`} role="status">

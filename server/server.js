@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { handleApi } from './api.js';
+import { createClassroomDb } from './classroom-db.js';
+import { handleClassroomApi } from './classroom-api.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,9 +107,15 @@ export function loadProductionSettings() {
   const appOrigin = process.env.APP_ORIGIN || merged.APP_ORIGIN || `http://127.0.0.1:${port}`;
 
   const db = initDatabase(process.env.DATABASE_PATH || merged.DATABASE_PATH);
+  const classroomDb = createClassroomDb({
+    DATABASE_URL: process.env.DATABASE_URL || merged.DATABASE_URL,
+    DATABASE_PATH: process.env.DATABASE_PATH || merged.DATABASE_PATH,
+    sqliteInstance: db._sqlite
+  });
 
   return {
     DB: db,
+    CLASSROOM_DB: classroomDb,
     PORT: port,
     HOST: host,
     APP_ORIGIN: appOrigin,
@@ -116,6 +124,7 @@ export function loadProductionSettings() {
     GITHUB_APP_ID: process.env.GITHUB_APP_ID || merged.GITHUB_APP_ID || '',
     GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG || merged.GITHUB_APP_SLUG || '',
     TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY || merged.TOKEN_ENCRYPTION_KEY || '',
+    TEACHER_SECRET_KEY: process.env.TEACHER_SECRET_KEY || merged.TEACHER_SECRET_KEY || '',
     STANDALONE: true,
     LOCAL_DEV: false
   };
@@ -126,6 +135,13 @@ export function createProductionServer(customSettings = {}) {
     ...loadProductionSettings(),
     ...customSettings
   };
+
+  // Ensure classroom database schema is initialized
+  if (settings.CLASSROOM_DB && typeof settings.CLASSROOM_DB.init === 'function') {
+    settings.CLASSROOM_DB.init().catch(err => {
+      console.error('Failed to initialize classroom database:', err);
+    });
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -151,8 +167,8 @@ export function createProductionServer(customSettings = {}) {
         return;
       }
 
-      // 1. API routes (/api/github/*)
-      if (url.pathname.startsWith('/api/github/')) {
+      // 1. API routes (/api/github/* and /api/classroom/*)
+      if (url.pathname.startsWith('/api/github/') || url.pathname.startsWith('/api/classroom/')) {
         let bodyBuffer = undefined;
         if (req.method !== 'GET' && req.method !== 'HEAD') {
           const chunks = [];
@@ -180,7 +196,10 @@ export function createProductionServer(customSettings = {}) {
           duplex: bodyBuffer && bodyBuffer.length > 0 ? 'half' : undefined
         });
 
-        const result = await handleApi(requestObj, settings);
+        const result = url.pathname.startsWith('/api/classroom/')
+          ? await handleClassroomApi(requestObj, settings)
+          : await handleApi(requestObj, settings);
+
         res.statusCode = result.status;
 
         if (typeof result.headers.getSetCookie === 'function') {
