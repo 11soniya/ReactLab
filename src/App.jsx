@@ -21,17 +21,21 @@ import {
   Loader2,
   ExternalLink,
   Download,
-  Upload
+  Upload,
+  Shield
 } from 'lucide-react';
 import { useWorkspace } from './hooks/useWorkspace';
 import { createPractical, duplicatePractical } from './utils/practicals';
 import { addEntry, renameEntry, deleteEntry, duplicateFile, basename, dirname, within } from './utils/filesystem';
 import { createBackupPayload, validateBackup, mergePracticals, downloadBackupFile } from './utils/backup';
 import { computePracticalHash, getPracticalSyncStatus } from './utils/syncHash';
+import { getConsentStatus, setConsentStatus, initAnalytics, ConsentState } from './utils/analytics';
 import Dialog from './components/Dialog';
 import FileExplorer, { FileIcon } from './components/FileExplorer';
 import PreviewPanel from './components/PreviewPanel';
 import GitHubDialog from './components/GitHubDialog';
+import PrivacyBanner from './components/PrivacyBanner';
+import PrivacyDialog from './components/PrivacyDialog';
 import { useGitHub } from './hooks/useGitHub';
 
 const CodeEditor = lazy(() => import('./components/CodeEditor'));
@@ -55,12 +59,25 @@ export default function App() {
 
   const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState(null);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [consent, setConsent] = useState(() => getConsentStatus());
   const [snapshot, setSnapshot] = useState(null);
   const [position, setPosition] = useState({ lineNumber: 1, column: 1 });
   const [notice, setNotice] = useState(null);
   const [isResizing, setIsResizing] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
   const [lastSyncError, setLastSyncError] = useState(null);
+
+  useEffect(() => {
+    if (consent === ConsentState.GRANTED) {
+      initAnalytics();
+    }
+    const handleConsentChange = (e) => {
+      setConsent(e.detail);
+    };
+    window.addEventListener('reactlab-consent-change', handleConsentChange);
+    return () => window.removeEventListener('reactlab-consent-change', handleConsentChange);
+  }, [consent]);
 
   const workspaceRef = useRef();
   const importFileInputRef = useRef(null);
@@ -534,6 +551,16 @@ export default function App() {
                   </button>
                 </div>
               </details>
+              <button
+                type="button"
+                className="sidebar-action-btn"
+                title="Privacy & Analytics preferences"
+                aria-label="Privacy and Analytics preferences"
+                onClick={() => setPrivacyOpen(true)}
+              >
+                <Shield size={14} />
+                <span>Privacy</span>
+              </button>
               <input
                 type="file"
                 ref={importFileInputRef}
@@ -792,6 +819,29 @@ export default function App() {
 
       {dialog && <Dialog config={dialog} onClose={() => setDialog(null)} />}
       {githubOpen && <GitHubDialog github={github} onClose={() => setGithubOpen(false)} />}
+      {privacyOpen && (
+        <PrivacyDialog
+          consentStatus={consent}
+          onUpdateConsent={(newStatus) => {
+            setConsentStatus(newStatus);
+            setConsent(newStatus);
+          }}
+          onClose={() => setPrivacyOpen(false)}
+        />
+      )}
+      {consent === ConsentState.PENDING && (
+        <PrivacyBanner
+          onAccept={() => {
+            setConsentStatus(ConsentState.GRANTED);
+            setConsent(ConsentState.GRANTED);
+          }}
+          onDecline={() => {
+            setConsentStatus(ConsentState.DENIED);
+            setConsent(ConsentState.DENIED);
+          }}
+          onOpenPrivacySettings={() => setPrivacyOpen(true)}
+        />
+      )}
     </div>
   );
 }
