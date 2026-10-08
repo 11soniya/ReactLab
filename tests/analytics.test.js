@@ -12,6 +12,10 @@ import {
   trackPageView,
   initAnalytics,
   isGaDisabled,
+  trackPracticalReopen,
+  markPracticalCreatedInSession,
+  markPracticalTrackedInSession,
+  trackGitHubConnectedOnce,
   _resetAnalyticsState
 } from '../src/utils/analytics.js';
 
@@ -359,3 +363,153 @@ test('Disabling analytics later stops further tracking and removes script elemen
 
   process.env.NODE_ENV = prevEnv;
 });
+
+test('Product usage events: practical_created, code_run, github_connected, github_sync_completed, backup_exported', (t) => {
+  _resetAnalyticsState();
+  const recordedEvents = [];
+  const fakeGtag = (...args) => {
+    recordedEvents.push(args);
+  };
+
+  const originalWindow = globalThis.window;
+  const storageMap = new Map();
+  storageMap.set(CONSENT_STORAGE_KEY, 'granted');
+
+  globalThis.window = {
+    gtag: fakeGtag,
+    localStorage: {
+      getItem: (k) => storageMap.get(k) ?? null,
+      setItem: (k, v) => storageMap.set(k, String(v))
+    },
+    location: {
+      origin: 'https://reactlab.onrender.com',
+      hostname: 'reactlab.onrender.com',
+      protocol: 'https:',
+      pathname: '/'
+    },
+    dispatchEvent: () => {}
+  };
+
+  t.after(() => {
+    globalThis.window = originalWindow;
+    _resetAnalyticsState();
+  });
+
+  const prevEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+
+  // 1. practical_created
+  trackSafeEvent('practical_created', {
+    starter_type: 'simple',
+    title: 'Secret Practical Name', // should be stripped
+    code: 'export default () => 123' // should be stripped
+  });
+  assert.equal(recordedEvents.length, 1);
+  assert.deepEqual(recordedEvents[0], ['event', 'practical_created', { starter_type: 'simple' }]);
+
+  // 2. code_run
+  trackSafeEvent('code_run');
+  assert.equal(recordedEvents.length, 2);
+  assert.deepEqual(recordedEvents[1], ['event', 'code_run', {}]);
+
+  // 3. github_connected
+  trackSafeEvent('github_connected', {
+    username: 'octocat', // should be stripped
+    token: 'gho_secret' // should be stripped
+  });
+  assert.equal(recordedEvents.length, 3);
+  assert.deepEqual(recordedEvents[2], ['event', 'github_connected', {}]);
+
+  // 4. github_sync_completed
+  trackSafeEvent('github_sync_completed', {
+    sha: '1234567890abcdef',
+    repo: 'my-repo'
+  });
+  assert.equal(recordedEvents.length, 4);
+  assert.deepEqual(recordedEvents[3], ['event', 'github_sync_completed', { sha: '1234567890abcdef', repo: 'my-repo' }]);
+
+  // 5. backup_exported
+  trackSafeEvent('backup_exported', {
+    practical_count: 5,
+    filename: 'reactlab-backup.json' // should be stripped
+  });
+  assert.equal(recordedEvents.length, 5);
+  assert.deepEqual(recordedEvents[4], ['event', 'backup_exported', { practical_count: 5 }]);
+
+  // 6. When consent is denied, none of the events fire
+  storageMap.set(CONSENT_STORAGE_KEY, 'denied');
+  assert.equal(trackSafeEvent('code_run'), false);
+  assert.equal(recordedEvents.length, 5); // count unchanged
+
+  process.env.NODE_ENV = prevEnv;
+});
+
+test('trackPracticalReopen and trackGitHubConnectedOnce persist across browser refreshes using sessionStorage', (t) => {
+  _resetAnalyticsState();
+  const recordedEvents = [];
+  const fakeGtag = (...args) => {
+    recordedEvents.push(args);
+  };
+
+  const originalWindow = globalThis.window;
+  const localStorageMap = new Map();
+  const sessionStorageMap = new Map();
+  localStorageMap.set(CONSENT_STORAGE_KEY, 'granted');
+
+  const mockSessionStorage = {
+    getItem: (k) => sessionStorageMap.get(k) ?? null,
+    setItem: (k, v) => sessionStorageMap.set(k, String(v))
+  };
+
+  globalThis.window = {
+    gtag: fakeGtag,
+    localStorage: {
+      getItem: (k) => localStorageMap.get(k) ?? null,
+      setItem: (k, v) => localStorageMap.set(k, String(v))
+    },
+    sessionStorage: mockSessionStorage,
+    location: {
+      origin: 'https://reactlab.onrender.com',
+      hostname: 'reactlab.onrender.com',
+      protocol: 'https:',
+      pathname: '/'
+    },
+    dispatchEvent: () => {}
+  };
+
+  t.after(() => {
+    globalThis.window = originalWindow;
+    _resetAnalyticsState();
+  });
+
+  const prevEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+
+  // 1. Existing practical opened on first load -> fires practical_reopened
+  assert.equal(trackPracticalReopen('p1', mockSessionStorage), true);
+  assert.equal(recordedEvents.length, 1);
+  assert.deepEqual(recordedEvents[0], ['event', 'practical_reopened', {}]);
+
+  // 2. Simulated browser refresh (F5) within same tab session -> sessionStorage retains state, does NOT re-fire
+  assert.equal(trackPracticalReopen('p1', mockSessionStorage), false);
+  assert.equal(recordedEvents.length, 1);
+
+  // 3. Newly created practical in current session -> marked created, does NOT fire practical_reopened on creation or refresh
+  markPracticalCreatedInSession('p2', mockSessionStorage);
+  markPracticalTrackedInSession('p2', mockSessionStorage);
+  assert.equal(trackPracticalReopen('p2', mockSessionStorage), false);
+  assert.equal(recordedEvents.length, 1);
+
+  // 4. GitHub authorization returns -> fires github_connected once
+  assert.equal(trackGitHubConnectedOnce(mockSessionStorage), true);
+  assert.equal(recordedEvents.length, 2);
+  assert.deepEqual(recordedEvents[1], ['event', 'github_connected', {}]);
+
+  // 5. Subsequent page refresh (F5) or re-render -> does NOT fire github_connected again
+  assert.equal(trackGitHubConnectedOnce(mockSessionStorage), false);
+  assert.equal(recordedEvents.length, 2);
+
+  process.env.NODE_ENV = prevEnv;
+});
+
+

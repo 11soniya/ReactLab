@@ -289,28 +289,138 @@ export function trackPageView() {
  * @param {Record<string, any>} [params]
  */
 export function trackSafeEvent(eventName, params = {}) {
-  if (typeof window === 'undefined' || typeof window.gtag !== 'function') {
+  try {
+    if (typeof window === 'undefined' || typeof window.gtag !== 'function') {
+      return false;
+    }
+
+    if (isGaDisabled() || !isAnalyticsAllowedEnvironment() || getConsentStatus() !== ConsentState.GRANTED) {
+      return false;
+    }
+
+    // Strictly filter out sensitive parameters
+    const forbiddenKeywords = ['code', 'question', 'title', 'filename', 'path', 'token', 'user', 'email', 'secret', 'key'];
+    const safeParams = {};
+
+    for (const [key, val] of Object.entries(params)) {
+      const lowerKey = key.toLowerCase();
+      if (forbiddenKeywords.some(f => lowerKey.includes(f))) {
+        continue;
+      }
+      if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
+        safeParams[key] = val;
+      }
+    }
+
+    window.gtag('event', eventName, safeParams);
+    return true;
+  } catch {
     return false;
   }
-
-  if (isGaDisabled() || !isAnalyticsAllowedEnvironment() || getConsentStatus() !== ConsentState.GRANTED) {
-    return false;
-  }
-
-  // Strictly filter out sensitive parameters
-  const forbiddenKeywords = ['code', 'question', 'title', 'filename', 'path', 'token', 'user', 'email', 'secret', 'key'];
-  const safeParams = {};
-
-  for (const [key, val] of Object.entries(params)) {
-    const lowerKey = key.toLowerCase();
-    if (forbiddenKeywords.some(f => lowerKey.includes(f))) {
-      continue;
-    }
-    if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
-      safeParams[key] = val;
-    }
-  }
-
-  window.gtag('event', eventName, safeParams);
-  return true;
 }
+
+/**
+ * Checks if a practical has already been opened during the current browser tab session.
+ * @param {string} practicalId
+ * @param {Storage|null} [storage]
+ */
+export function isPracticalTrackedInSession(practicalId, storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (!storage || !practicalId) return false;
+  try {
+    const raw = storage.getItem('reactlab_session_practicals');
+    if (!raw) return false;
+    const list = JSON.parse(raw);
+    return Array.isArray(list) && list.includes(practicalId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Marks a practical as opened during the current browser tab session.
+ * @param {string} practicalId
+ * @param {Storage|null} [storage]
+ */
+export function markPracticalTrackedInSession(practicalId, storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (!storage || !practicalId) return;
+  try {
+    const raw = storage.getItem('reactlab_session_practicals');
+    const list = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(list) && !list.includes(practicalId)) {
+      list.push(practicalId);
+      storage.setItem('reactlab_session_practicals', JSON.stringify(list));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
+ * Checks if a practical was newly created in the current browser tab session.
+ * @param {string} practicalId
+ * @param {Storage|null} [storage]
+ */
+export function isPracticalCreatedInSession(practicalId, storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (!storage || !practicalId) return false;
+  try {
+    const raw = storage.getItem('reactlab_session_created');
+    if (!raw) return false;
+    const list = JSON.parse(raw);
+    return Array.isArray(list) && list.includes(practicalId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Marks a practical as created in the current browser tab session so it is not double-counted as reopened.
+ * @param {string} practicalId
+ * @param {Storage|null} [storage]
+ */
+export function markPracticalCreatedInSession(practicalId, storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (!storage || !practicalId) return;
+  try {
+    const raw = storage.getItem('reactlab_session_created');
+    const list = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(list) && !list.includes(practicalId)) {
+      list.push(practicalId);
+      storage.setItem('reactlab_session_created', JSON.stringify(list));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
+ * Tracks practical_reopened once per practical per session (persisting across page reloads in the same tab).
+ * @param {string} practicalId
+ * @param {Storage|null} [storage]
+ */
+export function trackPracticalReopen(practicalId, storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (!practicalId) return false;
+  if (isPracticalCreatedInSession(practicalId, storage)) return false;
+  if (isPracticalTrackedInSession(practicalId, storage)) return false;
+
+  markPracticalTrackedInSession(practicalId, storage);
+  return trackSafeEvent('practical_reopened');
+}
+
+/**
+ * Tracks github_connected once per OAuth authorization session (persisting across browser refreshes).
+ * @param {Storage|null} [storage]
+ */
+export function trackGitHubConnectedOnce(storage = (typeof window !== 'undefined' ? window.sessionStorage : null)) {
+  if (storage) {
+    try {
+      if (storage.getItem('reactlab_github_connected_tracked')) {
+        return false;
+      }
+      storage.setItem('reactlab_github_connected_tracked', 'true');
+    } catch {
+      // Continue if storage fails
+    }
+  }
+  return trackSafeEvent('github_connected');
+}
+
+

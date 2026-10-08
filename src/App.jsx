@@ -29,7 +29,17 @@ import { createPractical, duplicatePractical } from './utils/practicals';
 import { addEntry, renameEntry, deleteEntry, duplicateFile, basename, dirname, within } from './utils/filesystem';
 import { createBackupPayload, validateBackup, mergePracticals, downloadBackupFile } from './utils/backup';
 import { computePracticalHash, getPracticalSyncStatus } from './utils/syncHash';
-import { getConsentStatus, setConsentStatus, initAnalytics, ConsentState } from './utils/analytics';
+import {
+  getConsentStatus,
+  setConsentStatus,
+  initAnalytics,
+  trackSafeEvent,
+  trackPracticalReopen,
+  markPracticalCreatedInSession,
+  markPracticalTrackedInSession,
+  trackGitHubConnectedOnce,
+  ConsentState
+} from './utils/analytics';
 import Dialog from './components/Dialog';
 import FileExplorer, { FileIcon } from './components/FileExplorer';
 import PreviewPanel from './components/PreviewPanel';
@@ -54,6 +64,7 @@ export default function App() {
     const url = new URL(location.href);
     if (url.searchParams.get('github') === 'authorized') {
       setGithubOpen(true);
+      trackGitHubConnectedOnce();
     }
   }, []);
 
@@ -89,6 +100,7 @@ export default function App() {
   function run() {
     if (activeRef.current) {
       setSnapshot({ practical: structuredClone(activeRef.current), runId: crypto.randomUUID() });
+      trackSafeEvent('code_run');
     }
   }
 
@@ -137,6 +149,7 @@ export default function App() {
           link: res.url || res.folderUrl,
           linkText: 'View on GitHub ↗'
         });
+        trackSafeEvent('github_sync_completed');
       }
     } catch (err) {
       setLastSyncError({ practicalId: active.id, message: err.message });
@@ -152,6 +165,9 @@ export default function App() {
       downloadBackupFile(data.practicals);
       setNotice({
         text: `✓ Exported backup with ${data.practicals.length} practical(s)`
+      });
+      trackSafeEvent('backup_exported', {
+        practical_count: data.practicals.length
       });
     } catch (e) {
       setNotice({
@@ -247,6 +263,10 @@ export default function App() {
     setSnapshot(null);
     setNotice(null);
     setLastSyncError(null);
+
+    if (active?.id) {
+      trackPracticalReopen(active.id);
+    }
   }, [active?.id]);
 
   useEffect(() => {
@@ -299,8 +319,13 @@ export default function App() {
       onSubmit: values => {
         const p = createPractical(values.title, values.question, values.starter === 'simple' ? values.component : null);
         if (!p.title) throw new Error('Give your practical a title.');
+        markPracticalCreatedInSession(p.id);
+        markPracticalTrackedInSession(p.id);
         setData(d => ({ ...d, practicals: [...d.practicals, p], activeId: p.id }));
         setSearch('');
+        trackSafeEvent('practical_created', {
+          starter_type: values.starter === 'simple' ? 'simple' : 'blank'
+        });
       }
     });
   }
